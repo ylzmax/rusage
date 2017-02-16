@@ -1,0 +1,109 @@
+#!/usr/bin/python
+import re
+import os,getpass
+from optparse import OptionParser
+import time
+
+def getinfo(queue):
+	if queue:
+		resdic={}
+		res=[]
+		stdin,stdout=os.popen4("source /tools_bj/lsf/conf/profile.lsf;bjobs -q %s -u all -r -l"%(queue))
+		if not stdout:
+			print "Error,not revice stdout from bjobs"
+			exit(0)
+
+		for l in stdout.readlines():
+			if "Job" in l:
+				jobid=re.findall("Job <\d+>",l)
+				if jobid:
+					jobidres=re.findall("\d+",jobid[0])
+					resdic["jobid"]=jobidres[0]
+				else:
+					break
+			if " The CPU time" in l :
+				cputime=re.findall("\d+",l)
+				resdic["cputime"]=cputime[0]
+			if "MAX MEM" in l :
+				maxmem=l.split()[2:4]
+				if "Gbytes" in maxmem[1]:
+					maxmem[0]=int(float(maxmem[0])*1000)
+				resdic["maxmem"]=int(maxmem[0])
+				resdic["memtype"]=maxmem[1]
+			if "rusage" and "Combined:" in l :
+				rusage=re.findall("[=|=(]\d+",l)
+				if len(rusage) ==1:
+					rus=re.findall("\d+",rusage[0])
+					resdic["rus"]=int(rus[0])
+					res.append(resdic)
+				resdic={}
+		#	print [e["jobid"] for e in res]
+		return res
+
+def calc(reslist):
+	if reslist:
+		for jobinfo in reslist:
+			if not len(jobinfo)<5:
+				if OPT.check:
+					newvalue=jobinfo["maxmem"]+jobinfo["maxmem"]*OPT.percent
+					print "%s: Jobid:%s: Maxmem:%d Mb rusage:%d  Runtime:%s Best %s Mb @ %s"%(time.ctime(),jobinfo["jobid"],jobinfo["maxmem"],jobinfo["rus"],str(jobinfo["cputime"]),str(newvalue),str(OPT.percent))
+				else:
+					if not USER=="root":
+						print "Run check must add -c or must run as root"
+						return 0
+					if int(jobinfo["cputime"]) > OPT.time:
+						memcha=jobinfo["rus"] - jobinfo["maxmem"]
+						if memcha >  jobinfo["maxmem"]*OPT.percent or memcha < 0:
+							newvalue=jobinfo["maxmem"]+jobinfo["maxmem"]*OPT.percent
+							#newvalueMB=int(newvalue*1000)
+							print "%s: Jobid:%s: Maxmem:%d Mb rusage:%d  Runtime:%s Best %s Mb @ %s"%(time.ctime(),jobinfo["jobid"],jobinfo["maxmem"],jobinfo["rus"],str(jobinfo["cputime"]),str(newvalue),str(OPT.percent))
+						#	print "Jobid:%s: Maxmem:%d Mb rusage:%d  Best %s Mb @ %s"%(jobinfo["jobid"],jobinfo["maxmem"],jobinfo["rus"],str(newvalue),str(OPT.percent))
+							#start to change rusage 
+							chrus(jobinfo["jobid"],newvalue)
+		print time.ctime()+" "+"Run end!"
+						
+
+
+def chrus(jobid,memvalue):
+	if jobid and memvalue:
+		stdin,stdout,stderr=os.popen3("source /tools_bj/lsf/conf/profile.lsf;bmod -R 'rusage[mem=%d]' %s"%(memvalue,jobid))
+		if stderr.readline():
+			print "Error feed back from bmod " 
+			return 0
+		res=stdout.readline()
+		if res:
+			print "job %s has resize mem rusage to %d"%(jobid,memvalue)
+			print res
+		
+	else:
+		print "Error :no jobid and memvalue recivce"
+
+def optp():
+	usage="For automatic change bsub jobs rusage fit for real mem needed!"
+	parser=OptionParser(usage)
+	parser.add_option("-q",type="string",dest="queue",help="set queue name to check")
+	parser.add_option("-p",type="int",dest="percent",help="set percent to add mem, defalut is 10%, plesae input 10 just ok")
+	parser.add_option("-t",type="int",dest="time",help="set time of job run to change rusage, default 600s")
+	parser.add_option("-c",action="store_true",dest="check",help="check queue mem info, not real run ,like dryrun and check info")
+	(options,args)=parser.parse_args()
+	if not options.queue:
+		print "usage: queue name must be set by -q"
+		print "ex: rusage -q normal"
+		return 0
+	if not options.percent:
+		#set default value to 10%
+		options.percent=10*1.0/100
+	else:
+		options.percent=options.percent*1.0/100
+	if not options.time:
+		#set default value to 10%
+		options.time=600
+	return options		
+
+if __name__ == "__main__":
+	#calc(reslist)
+	USER=getpass.getuser()
+	OPT=optp()
+	if OPT:
+		reslist=getinfo(OPT.queue)
+		calc(reslist)
